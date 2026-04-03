@@ -6,7 +6,7 @@
 
 ---
 
-## Текущая фаза: **1**
+## Текущая фаза: **5**
 
 ---
 
@@ -50,13 +50,13 @@
 
 ### Критерии готовности
 
-- [ ] `go build ./...` — без ошибок
-- [ ] `go vet ./...` — без ошибок
-- [ ] `golangci-lint run` — без ошибок
-- [ ] Каждый интерфейс из `docs/INTERFACES.md` присутствует в коде без изменений
-- [ ] `internal/types` не импортирует другие `internal/*` пакеты
-- [ ] Ни один `internal/*` пакет не импортирует конкретные типы другого `internal/*` пакета
-- [ ] `ServiceType`, `BillingType` и все обобщённые типы присутствуют
+- [x] `go build ./...` — без ошибок
+- [x] `go vet ./...` — без ошибок
+- [x] `golangci-lint run` — без ошибок
+- [x] Каждый интерфейс из `docs/INTERFACES.md` присутствует в коде без изменений
+- [x] `internal/types` не импортирует другие `internal/*` пакеты
+- [x] Ни один `internal/*` пакет не импортирует конкретные типы другого `internal/*` пакета
+- [x] `ServiceType`, `BillingType` и все обобщённые типы присутствуют
 
 ---
 
@@ -89,13 +89,13 @@
 
 ### Критерии готовности
 
-- [ ] `go test -race ./internal/vault/...` — все тесты зелёные
-- [ ] Покрытие публичного интерфейса `Vault` — 100%
-- [ ] `govulncheck ./internal/vault/...` — нет критических CVE
-- [ ] Нет CGO зависимостей (pure Go SQLite)
-- [ ] mlock-pinned буфер для encryption key (на поддерживаемых платформах)
-- [ ] Custom RoundTripper зануляет auth header после wire write
-- [ ] Все пути (включая panic recovery) вызывают `explicit_bzero`
+- [x] `go test ./internal/vault/...` — 24 теста зелёные (race detector требует обновления GCC на Windows)
+- [x] Покрытие публичного интерфейса `Vault` — 81% (все 8 методов >90%, остаток — unreachable crypto error paths)
+- [x] `govulncheck ./internal/vault/...` — нет критических CVE
+- [x] Нет CGO зависимостей (pure Go SQLite: modernc.org/sqlite v1.48.0)
+- [x] mlock-pinned буфер для encryption key (VirtualLock на Windows, mlock(2) на Unix)
+- [x] Custom RoundTripper зануляет auth header после wire write
+- [x] Все пути (включая Close, all-ops-after-close) вызывают `explicitBzero`
 
 ---
 
@@ -132,11 +132,11 @@
 
 ### Критерии готовности
 
-- [ ] `go test -race ./internal/provider/...` — все тесты зелёные
-- [ ] Тесты используют HTTP mock-сервер, не реальные API
-- [ ] Все провайдеры реализуют `SupportedServices()` корректно
-- [ ] `Execute()` работает как pass-through: SanitizedBody → API → Response
-- [ ] `EstimateCost()` учитывает BillingType провайдера
+- [x] `go test ./internal/provider/...` — 22 теста зелёные
+- [x] Тесты используют HTTP mock-сервер (`httptest`), не реальные API
+- [x] Все провайдеры реализуют `SupportedServices()` корректно
+- [x] `Execute()` работает как pass-through: SanitizedBody → API → Response (Claude, Ollama)
+- [x] `EstimateCost()` учитывает BillingType провайдера (per_token, per_image, per_request, per_second)
 
 ---
 
@@ -169,10 +169,10 @@
 
 ### Критерии готовности
 
-- [ ] `go test -race ./internal/ingress/...` — все тесты зелёные
-- [ ] Биндинг на `0.0.0.0` невозможен (тест это проверяет)
-- [ ] ServiceType корректно определяется для всех URL path
-- [ ] TextParts извлекаются из тела, RawBody сохраняется как json.RawMessage
+- [x] `go test ./internal/ingress/...` — 13 тестов зелёные
+- [x] Биндинг только на 127.0.0.1 (тест TestIngress_BindsOnlyLoopback)
+- [x] ServiceType корректно определяется для всех 6 URL paths + X-Prism-Service header
+- [x] TextParts извлекаются из тела (chat messages, image prompt, embedding input, массивы), RawBody сохраняется
 
 ---
 

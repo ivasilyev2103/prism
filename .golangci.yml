@@ -1,0 +1,25 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - gosec
+    - revive
+
+linters-settings:
+  gosec:
+    excludes:
+      - G101 # false positive on token prefix constants
+      - G104 # allow unchecked errors in non-critical paths during early phases
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - disableStutteringCheck
