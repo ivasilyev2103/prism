@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audit — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html" class="active">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Audit &mdash; Журнал аудита</h1>
+          <p class="subtitle">Append-only лог с HMAC chain для обнаружения подделки</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/audit.html" class="active">RU</a>
+          <a href="../en/audit.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Append-only лог метаданных запросов. Тела запросов и ответов <strong>не логируются никогда</strong> &mdash; это инвариант, не ограничение. Logger принимает только <code>*types.RequestRecord</code> &mdash; структуру без тел.</p>
+        <p>WORM-семантика через SQLite триггеры + <strong>обязательная HMAC chain</strong> для tamper detection. Каждая запись содержит <code>ServiceType</code> для фильтрации по типу AI-сервиса.</p>
+      </div>
+
+      <!-- HMAC Chain -->
+      <h2>HMAC Chain</h2>
+      <div class="card">
+        <h3>Цепочка HMAC-SHA256</h3>
+        <p>Каждая запись содержит HMAC, вычисленный как цепочка:</p>
+        <pre><code>record[0].hmac = HMAC-SHA256(key, serialize(record[0]) || "genesis")
+record[n].hmac = HMAC-SHA256(key, serialize(record[n]) || record[n-1].hmac)</code></pre>
+        <p>Любая модификация, удаление или вставка записи разрывает цепочку и обнаруживается через <code>VerifyChain()</code>.</p>
+        <h3>Производство HMAC ключа</h3>
+        <p>HMAC ключ <strong>отделён</strong> от encryption key и производится из master password через HKDF:</p>
+        <pre><code>Master Password
+    &darr; Argon2id &rarr; master_key
+    &darr;
+    &boxur;&boxh;&boxh; HKDF(master_key, salt, info="prism-vault-encryption") &rarr; encryption_key
+    &boxur;&boxh;&boxh; HKDF(master_key, salt, info="prism-audit-hmac")       &rarr; hmac_key</code></pre>
+        <p>Разделение ключей гарантирует: компрометация encryption key не компрометирует audit HMAC, и наоборот.</p>
+        <h3>VerifyChain</h3>
+        <p><code>VerifyChain(ctx, from, to)</code> загружает все записи за период, последовательно вычисляет <code>expected_hmac</code> для каждой и сравнивает с сохранённым. При расхождении возвращает ошибку с ID первой повреждённой записи.</p>
+        <p>Рекомендуется вызывать при каждом запуске Prism и периодически (cron).</p>
+      </div>
+
+      <!-- WORM -->
+      <h2>WORM</h2>
+      <div class="card">
+        <h3>SQLite триггеры</h3>
+        <p>SQLite триггеры запрещают <code>UPDATE</code> и <code>DELETE</code> на таблице audit:</p>
+        <pre><code>CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit log is immutable: UPDATE not allowed');
+END;
+
+CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit log is immutable: DELETE not allowed');
+END;</code></pre>
+        <p><strong>Важно</strong>: WORM-триггеры &mdash; недостаточная защита сами по себе. Прямое открытие <code>audit.db</code> сторонним инструментом обходит триггеры. Основная защита &mdash; <strong>HMAC chain</strong>. Триггеры &mdash; дополнительный барьер от случайных модификаций через Prism код.</p>
+      </div>
+
+      <!-- Что логируется -->
+      <h2>Что логируется</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Поле</th>
+            <th>Тип</th>
+            <th>Описание</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>TEXT</td><td>Уникальный ID запроса</td></tr>
+          <tr><td><code>ts</code></td><td>INTEGER</td><td>Unix timestamp</td></tr>
+          <tr><td><code>project_id</code></td><td>TEXT</td><td>ID проекта</td></tr>
+          <tr><td><code>provider_id</code></td><td>TEXT</td><td>ID провайдера</td></tr>
+          <tr><td><code>service_type</code></td><td>TEXT</td><td>Тип AI-сервиса (chat, image, embedding, ...)</td></tr>
+          <tr><td><code>model</code></td><td>TEXT</td><td>Используемая модель</td></tr>
+          <tr><td><code>input_tokens</code></td><td>INTEGER</td><td>Входящие токены</td></tr>
+          <tr><td><code>output_tokens</code></td><td>INTEGER</td><td>Исходящие токены</td></tr>
+          <tr><td><code>images_count</code></td><td>INTEGER</td><td>Количество сгенерированных изображений</td></tr>
+          <tr><td><code>audio_seconds</code></td><td>REAL</td><td>Секунды аудио (TTS/STT)</td></tr>
+          <tr><td><code>compute_units</code></td><td>REAL</td><td>Единицы вычислений (3D и др.)</td></tr>
+          <tr><td><code>cost_usd</code></td><td>REAL</td><td>Стоимость запроса в USD</td></tr>
+          <tr><td><code>billing_type</code></td><td>TEXT</td><td>Модель биллинга</td></tr>
+          <tr><td><code>latency_ms</code></td><td>INTEGER</td><td>Задержка ответа (мс)</td></tr>
+          <tr><td><code>privacy_score</code></td><td>REAL</td><td>Оценка приватности (0.0&ndash;1.0)</td></tr>
+          <tr><td><code>pii_entities</code></td><td>INTEGER</td><td>Количество найденных PII-сущностей</td></tr>
+          <tr><td><code>cache_hit</code></td><td>BOOLEAN</td><td>Запрос обслужен из кэша</td></tr>
+          <tr><td><code>route_matched</code></td><td>TEXT</td><td>Сработавшее правило маршрутизации</td></tr>
+          <tr><td><code>status</code></td><td>TEXT</td><td>ok | error | budget_blocked | quota_exceeded | cache_hit</td></tr>
+          <tr><td><code>hmac</code></td><td>TEXT</td><td>HMAC-SHA256 для tamper detection</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ServiceType -->
+      <h2>ServiceType</h2>
+      <div class="card">
+        <p>Каждая запись содержит <code>ServiceType</code> из <code>types.RequestRecord</code>. Это позволяет:</p>
+        <ul>
+          <li>Фильтрацию аудит-лога по типу сервиса (<code>Filter.ServiceType</code>)</li>
+          <li>Анализ: сколько запросов по каждому типу (chat, image, embedding и др.)</li>
+          <li>Корреляцию с Cost Tracker по <code>service_type</code></li>
+        </ul>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Logger interface {
+    // Log записывает запись. Append-only, изменение невозможно.
+    // Автоматически вычисляет HMAC: hash(content || prev_hmac).
+    Log(ctx context.Context, r *types.RequestRecord) error
+
+    // Query возвращает записи с фильтрацией (без тел запросов).
+    Query(ctx context.Context, filter *Filter) ([]*types.RequestRecord, error)
+
+    // VerifyChain проверяет целостность HMAC-цепочки за период.
+    VerifyChain(ctx context.Context, from, to time.Time) error
+}
+
+type Filter struct {
+    ProjectID   string
+    ProviderID  types.ProviderID
+    ServiceType types.ServiceType
+    From        time.Time
+    To          time.Time
+    Status      string
+    Limit       int
+    Offset      int
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cache — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html" class="active">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Cache &mdash; Семантический кэш</h1>
+          <p class="subtitle">Кэширование похожих запросов с VP-tree индексом</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/cache.html" class="active">RU</a>
+          <a href="../en/cache.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Кэширует ответы на семантически похожие запросы. Эмбеддинги генерируются <strong>локально</strong> через Ollama (<code>nomic-embed-text</code>). VP-tree обеспечивает <strong>O(log n)</strong> поиск ближайших соседей.</p>
+        <p>Prism &mdash; универсальный AI-шлюз, поэтому кэш учитывает <code>ServiceType</code>: детерминистичные сервисы (chat, embedding) кэшируются по умолчанию, стохастичные (image, 3d_model) &mdash; нет.</p>
+      </div>
+
+      <!-- Алгоритм -->
+      <h2>Алгоритм</h2>
+      <div class="card">
+        <h3>Поиск по cosine similarity</h3>
+        <pre><code>embed(text) &rarr; cosine_similarity с кэшем
+    &darr;
+similarity &gt; 0.95 &rarr; cache hit  &rarr; вернуть закэшированный ответ
+similarity &le; 0.95 &rarr; cache miss &rarr; запрос к провайдеру &rarr; сохранение в кэш</code></pre>
+        <p>Threshold <code>0.95</code> &mdash; глобальное значение для всех проектов. Per-project настройка планируется в будущих фазах.</p>
+      </div>
+
+      <!-- Cache Policy -->
+      <h2>Cache Policy</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ServiceType</th>
+            <th>Кэширование</th>
+            <th>TTL (с)</th>
+            <th>Причина</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>chat</code></td>
+            <td><span class="badge badge-green">Да</span></td>
+            <td>3600</td>
+            <td>Детерминистично при temperature=0</td>
+          </tr>
+          <tr>
+            <td><code>embedding</code></td>
+            <td><span class="badge badge-green">Да</span></td>
+            <td>86400</td>
+            <td>Полностью детерминистично</td>
+          </tr>
+          <tr>
+            <td><code>image</code></td>
+            <td><span class="badge badge-red">Нет</span></td>
+            <td>&mdash;</td>
+            <td>Стохастично</td>
+          </tr>
+          <tr>
+            <td><code>tts</code></td>
+            <td><span class="badge badge-orange">Настраиваемо</span></td>
+            <td>86400</td>
+            <td>Зависит от voice+text</td>
+          </tr>
+          <tr>
+            <td><code>3d_model</code></td>
+            <td><span class="badge badge-red">Нет</span></td>
+            <td>&mdash;</td>
+            <td>Стохастично</td>
+          </tr>
+          <tr>
+            <td><code>stt</code></td>
+            <td><span class="badge badge-red">Нет</span></td>
+            <td>&mdash;</td>
+            <td>Audio input</td>
+          </tr>
+          <tr>
+            <td><code>moderation</code></td>
+            <td><span class="badge badge-red">Нет</span></td>
+            <td>&mdash;</td>
+            <td>Нет смысла</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><code>Get</code> и <code>Set</code> первым делом проверяют <code>CachePolicy</code> для <code>req.ServiceType</code>. Если кэширование отключено: <code>Get</code> возвращает miss, <code>Set</code> &mdash; no-op.</p>
+
+      <!-- Шифрование -->
+      <h2>Шифрование</h2>
+      <div class="card">
+        <h3>Sanitized ответы + зашифрованные PII mappings</h3>
+        <p>Кэш хранит два компонента для каждой записи:</p>
+        <ul>
+          <li><strong>Sanitized response</strong> &mdash; ответ с placeholder'ами вместо реальных PII</li>
+          <li><strong>Encrypted PII mapping</strong> &mdash; зашифрованный per-entry (AES-256-GCM) маппинг placeholder &rarr; оригинальное значение</li>
+        </ul>
+        <p>PII никогда не хранится на диске в plaintext. Каждая запись шифруется отдельным ключом (derived от master key + entry ID). Компрометация одной записи не раскрывает другие.</p>
+        <p>При cache hit:</p>
+        <ol>
+          <li>Найти семантически похожий запрос (cosine similarity &gt; threshold)</li>
+          <li>Расшифровать PII mapping для данной записи</li>
+          <li>Применить restoration (подменить placeholder'ы на оригинальные данные)</li>
+          <li>Вернуть восстановленный ответ</li>
+        </ol>
+      </div>
+
+      <!-- VP-Tree -->
+      <h2>VP-Tree</h2>
+      <div class="card">
+        <h3>In-memory vector index</h3>
+        <p>Вместо brute-force O(n) scan по SQLite используется <strong>VP-tree</strong> (Vantage Point tree) для O(log n) lookup:</p>
+        <ul>
+          <li>Embeddings загружаются в память при старте из SQLite</li>
+          <li>Index обновляется при добавлении новых записей (<code>Set</code>)</li>
+          <li>SQLite (<code>modernc.org/sqlite</code>, pure Go) &mdash; persistent backend для durability</li>
+          <li>При рестарте &mdash; index восстанавливается из SQLite</li>
+        </ul>
+      </div>
+
+      <!-- Деградация -->
+      <h2>Деградация</h2>
+      <div class="card">
+        <h3>Ollama недоступна</h3>
+        <p>Если Ollama недоступна, Semantic Cache деградирует gracefully:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Метод</th>
+              <th>Поведение</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Get</code></td>
+              <td>Возвращает miss (не ошибку)</td>
+            </tr>
+            <tr>
+              <td><code>Set</code></td>
+              <td>No-op (не записывает)</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Policy Engine продолжает работу без кэша. Приложение не знает о деградации &mdash; просто нет cache hit.</p>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type SemanticCache interface {
+    // Get ищет семантически похожий запрос в кэше.
+    // Возвращает (nil, nil) при промахе или если кэширование отключено.
+    Get(ctx context.Context, req *types.SanitizedRequest) (*types.Response, error)
+
+    // Set сохраняет запрос и ответ в кэш.
+    // Для ServiceType с отключенным кэшированием — no-op.
+    Set(ctx context.Context, req *types.SanitizedRequest, resp *types.Response) error
+
+    // Invalidate удаляет записи по projectID.
+    Invalidate(ctx context.Context, projectID string) error
+}
+
+type Embedder interface {
+    // Embed возвращает embedding для текста.
+    // Реализация: nomic-embed-text через Ollama (локально).
+    Embed(ctx context.Context, text string) ([]float32, error)
+
+    // HealthCheck проверяет доступность Ollama.
+    HealthCheck(ctx context.Context) error
+}
+
+type CachePolicy struct {
+    ServiceType types.ServiceType
+    Enabled     bool
+    TTL         int // секунды; 0 = default
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

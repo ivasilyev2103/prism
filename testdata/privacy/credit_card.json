@@ -1,0 +1,12 @@
+{
+  "description": "Credit card number in various formats",
+  "profile": "strict",
+  "input_parts": [
+    {"role": "user", "content": "Pay with card 4111 1111 1111 1111 or 5500-0000-0000-0004", "index": 0}
+  ],
+  "expected_original_not_in_sanitized": ["4111 1111 1111 1111", "5500-0000-0000-0004"],
+  "expected_entities": [
+    {"type": "CREDIT_CARD", "score_min": 0.90}
+  ],
+  "restore_check": true
+}

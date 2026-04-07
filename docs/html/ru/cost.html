@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cost — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html" class="active">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Cost &mdash; Учёт расходов</h1>
+          <p class="subtitle">Трекинг расходов, бюджеты, квоты подписок</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/cost.html" class="active">RU</a>
+          <a href="../en/cost.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Учёт расходов и потребления квот. Поддерживает <strong>many-to-many</strong> связь между проектами и провайдерами, <strong>5 моделей биллинга</strong> и <strong>4-уровневую иерархию бюджетов</strong>.</p>
+        <p>Использует in-memory write buffer с периодическим flush в SQLite для снижения write contention при concurrent нагрузке. Один провайдер может использовать разные <code>BillingType</code> для разных <code>ServiceType</code> &mdash; например, OpenAI: <code>per_token</code> для chat, <code>per_image</code> для DALL-E, <code>per_request</code> для moderation.</p>
+      </div>
+
+      <!-- Модели биллинга -->
+      <h2>Модели биллинга</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>BillingType</th>
+            <th>Как считается</th>
+            <th>Примеры</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>per_token</code></td>
+            <td>tokens &times; price/1M</td>
+            <td>Claude, GPT</td>
+          </tr>
+          <tr>
+            <td><code>per_image</code></td>
+            <td>images &times; price</td>
+            <td>DALL-E</td>
+          </tr>
+          <tr>
+            <td><code>per_request</code></td>
+            <td>фиксированная цена</td>
+            <td>Moderation</td>
+          </tr>
+          <tr>
+            <td><code>per_second</code></td>
+            <td>compute_time &times; price</td>
+            <td>3D generation</td>
+          </tr>
+          <tr>
+            <td><code>subscription</code></td>
+            <td>квоты периода</td>
+            <td>Claude Pro</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Write Buffer -->
+      <h2>Write Buffer</h2>
+      <div class="card">
+        <h3>In-memory ring buffer</h3>
+        <p><code>Record()</code> добавляет <code>RequestRecord</code> в ring buffer. Фоновая горутина выполняет flush в SQLite пакетами:</p>
+        <ul>
+          <li>Каждую <strong>1 секунду</strong> (по таймеру)</li>
+          <li>Или при <strong>100 записях</strong> в буфере (что наступит раньше)</li>
+        </ul>
+        <p>Flush использует <code>BEGIN IMMEDIATE</code> + batch INSERT для атомарности. Graceful shutdown вызывает <code>Flush()</code> для принудительной записи буфера.</p>
+        <pre><code>Record() &rarr; [ring buffer] &rarr; flush goroutine &rarr; BEGIN IMMEDIATE &rarr; batch INSERT &rarr; COMMIT
+                                   &uarr; timer (1s)
+                                   &uarr; buffer full (100)
+                                   &uarr; Flush() (shutdown)</code></pre>
+        <p>При crash теряются записи из буфера (до 1 секунды или 100 записей). Это допустимо &mdash; метаданные, не финансовые транзакции.</p>
+      </div>
+
+      <!-- Иерархия бюджетов -->
+      <h2>Иерархия бюджетов</h2>
+      <div class="card">
+        <h3>4-уровневая система</h3>
+        <p>Проверяются <strong>все применимые бюджеты</strong> от конкретного к общему, срабатывает самый строгий:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Уровень</th>
+              <th>Область</th>
+              <th>Описание</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-purple">1</span></td>
+              <td>project &times; provider</td>
+              <td>Бюджет конкретной пары проект-провайдер</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-blue">2</span></td>
+              <td>project</td>
+              <td>Бюджет проекта (все провайдеры)</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-orange">3</span></td>
+              <td>provider</td>
+              <td>Бюджет провайдера (все проекты)</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-red">4</span></td>
+              <td>global</td>
+              <td>Глобальный бюджет</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Действия при превышении:</p>
+        <ul>
+          <li><strong>block</strong> &mdash; запрос отклоняется (HTTP 429)</li>
+          <li><strong>downgrade_model</strong> &mdash; переключение на дешёвую модель</li>
+          <li><strong>alert</strong> &mdash; запрос пропускается, отправляется уведомление</li>
+        </ul>
+      </div>
+
+      <!-- Subscription Tracking -->
+      <h2>Subscription Tracking</h2>
+      <div class="card">
+        <h3>Мониторинг квот за период</h3>
+        <p>Для subscription-провайдеров Cost Tracker отслеживает потребление квот за текущий период. Квоты сбрасываются в <code>sub_reset_day</code> каждого месяца.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Тип квоты</th>
+              <th>Описание</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>requests</code></td>
+              <td>Количество запросов за период</td>
+            </tr>
+            <tr>
+              <td><code>input_tokens</code></td>
+              <td>Входящие токены за период</td>
+            </tr>
+            <tr>
+              <td><code>output_tokens</code></td>
+              <td>Исходящие токены за период</td>
+            </tr>
+            <tr>
+              <td><code>images</code></td>
+              <td>Сгенерированные изображения за период</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>При исчерпании квоты возвращается <code>QuotaExceededError</code>. Лимит <code>nil</code> означает безлимитный доступ.</p>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Tracker interface {
+    // Record сохраняет метрики завершённого запроса (async-safe).
+    Record(ctx context.Context, r *types.RequestRecord) error
+
+    // Summary возвращает агрегированные данные за период.
+    Summary(ctx context.Context, projectID string, providerID types.ProviderID, from, to time.Time) (*Summary, error)
+
+    // QuotaUsage возвращает текущее потребление квот подписки.
+    QuotaUsage(ctx context.Context, providerID types.ProviderID) (*QuotaUsage, error)
+
+    // Flush принудительно записывает буфер в SQLite.
+    Flush(ctx context.Context) error
+}
+
+type Summary struct {
+    TotalUSD        float64
+    RequestsCount   int64
+    CacheSavingsUSD float64
+    ByProvider      map[types.ProviderID]*ProviderSummary
+    ByProject       map[string]*ProjectSummary
+    ByPair          map[string]*PairSummary
+}
+
+type QuotaUsage struct {
+    ProviderID        types.ProviderID
+    PeriodStart       time.Time
+    PeriodEnd         time.Time
+    RequestsUsed      int64
+    RequestsLimit     *int64
+    InputTokensUsed   int64
+    InputTokensLimit  *int64
+    OutputTokensUsed  int64
+    OutputTokensLimit *int64
+    ImagesUsed        int64
+    ImagesLimit       *int64
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

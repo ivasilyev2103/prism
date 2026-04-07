@@ -1,0 +1,15 @@
+{
+  "description": "Mixed Russian and English text with PII",
+  "profile": "moderate",
+  "input_parts": [
+    {"role": "user", "content": "Пользователь test@mail.ru с IP 192.168.1.100 отправил запрос", "index": 0},
+    {"role": "system", "content": "SSN клиента: 123-45-6789", "index": 1}
+  ],
+  "expected_original_not_in_sanitized": ["test@mail.ru", "192.168.1.100", "123-45-6789"],
+  "expected_entities": [
+    {"type": "EMAIL", "score_min": 0.99},
+    {"type": "IP_ADDRESS", "score_min": 0.85},
+    {"type": "SSN", "score_min": 0.90}
+  ],
+  "restore_check": true
+}

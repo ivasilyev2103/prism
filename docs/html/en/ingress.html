@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ingress &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html" class="active">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Ingress &mdash; Entry Point</h1>
+          <p class="subtitle">Authentication, rate limiting, ServiceType detection, text extraction</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/ingress.html">RU</a>
+          <a href="../en/ingress.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>First line of defense. Validates the token, applies rate limit, determines <code>ServiceType</code>, extracts <code>TextParts</code> for PII scanning, and preserves <code>RawBody</code>.</p>
+        <p>Ingress is the sole entry point for all requests to Prism. Every request passes through authentication and rate limiting before any further processing.</p>
+      </div>
+
+      <!-- ServiceType Detection -->
+      <h2>ServiceType Detection</h2>
+      <div class="card">
+        <h3>Service Type by URL Path</h3>
+        <table>
+          <thead>
+            <tr><th>URL Path</th><th>ServiceType</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/v1/chat/completions</code></td><td><span class="badge badge-blue">chat</span></td></tr>
+            <tr><td><code>/v1/images/generations</code></td><td><span class="badge badge-purple">image</span></td></tr>
+            <tr><td><code>/v1/embeddings</code></td><td><span class="badge badge-green">embedding</span></td></tr>
+            <tr><td><code>/v1/audio/speech</code></td><td><span class="badge badge-orange">tts</span></td></tr>
+            <tr><td><code>/v1/audio/transcriptions</code></td><td><span class="badge badge-orange">stt</span></td></tr>
+            <tr><td><code>/v1/moderations</code></td><td><span class="badge badge-red">moderation</span></td></tr>
+            <tr><td><code>X-Prism-Service: 3d_model</code></td><td><span class="badge badge-purple">3d_model</span></td></tr>
+          </tbody>
+        </table>
+        <p>For non-standard service types, the <code>X-Prism-Service</code> header is used. This allows supporting new AI APIs without modifying URL-based routing.</p>
+      </div>
+
+      <!-- TextParts Extraction -->
+      <h2>TextParts Extraction</h2>
+      <div class="card">
+        <h3>Text Extraction per ServiceType</h3>
+        <table>
+          <thead>
+            <tr><th>ServiceType</th><th>TextParts Source</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>chat</code></td><td><code>messages[].content</code></td></tr>
+            <tr><td><code>image</code>, <code>3d_model</code></td><td><code>prompt</code></td></tr>
+            <tr><td><code>embedding</code>, <code>tts</code></td><td><code>input</code></td></tr>
+            <tr><td><code>stt</code></td><td>none (binary data)</td></tr>
+            <tr><td><code>moderation</code></td><td><code>input</code></td></tr>
+          </tbody>
+        </table>
+        <p>Extracted <code>TextParts</code> are passed to the Privacy Pipeline for PII scanning. The original request body is preserved as <code>json.RawMessage</code> for pass-through to the provider.</p>
+      </div>
+
+      <!-- Authentication -->
+      <h2>Authentication</h2>
+      <div class="card">
+        <h3>X-Prism-Token</h3>
+        <p>Every request must include the <code>X-Prism-Token</code> header. Ingress passes the token to <code>Vault.ValidateToken()</code> for verification.</p>
+        <p>Verification is performed via <code>HMAC(token)</code> lookup in the DB + constant-time compare. Without a valid token, the request is rejected with <strong>401 Unauthorized</strong>.</p>
+      </div>
+
+      <!-- Rate Limiting -->
+      <h2>Rate Limiting</h2>
+      <div class="card">
+        <h3>Token Bucket per projectID</h3>
+        <p>The rate limiter uses the Token Bucket algorithm &mdash; a separate bucket for each <code>projectID</code>. The <code>rate_limit_per_minute</code> parameter is configurable in the project configuration.</p>
+        <p>When the limit is exceeded, <strong>429 Too Many Requests</strong> is returned.</p>
+      </div>
+
+      <!-- Security -->
+      <h2>Security</h2>
+      <div class="card">
+        <p>Prism binds only to <code>127.0.0.1</code> (loopback). This prevents API access from outside the machine.</p>
+        <p>Plaintext tokens are never stored in the DB &mdash; only HMAC hashes. Ingress itself has no access to provider API keys.</p>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Handler interface {
+    Handle(ctx context.Context, r *http.Request) (*types.ParsedRequest, error)
+}
+
+type RateLimiter interface {
+    Allow(projectID string) bool
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

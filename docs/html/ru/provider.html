@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Provider — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html" class="active">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Provider &mdash; Адаптеры провайдеров</h1>
+          <p class="subtitle">Нормализация различных AI API к единому интерфейсу Provider</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/provider.html" class="active">RU</a>
+          <a href="../en/provider.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Pass-through прокси к AI-провайдерам. Получает <code>SanitizedBody</code> и проксирует к API с минимальными изменениями (auth header, endpoint rewrite).</p>
+        <p>Provider не модифицирует содержимое запроса &mdash; только добавляет аутентификацию через Vault и формирует правильный URL endpoint.</p>
+      </div>
+
+      <!-- Реализации -->
+      <h2>Реализации</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Провайдер</th>
+            <th>ServiceTypes</th>
+            <th>BillingType</th>
+            <th>Статус</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Claude</td>
+            <td>chat</td>
+            <td>per_token</td>
+            <td><span class="badge badge-green">Полный</span></td>
+          </tr>
+          <tr>
+            <td>Ollama</td>
+            <td>chat, embedding, image</td>
+            <td>бесплатный</td>
+            <td><span class="badge badge-green">Полный</span></td>
+          </tr>
+          <tr>
+            <td>OpenAI</td>
+            <td>chat, image, embedding, tts, stt, moderation</td>
+            <td>per_token, per_image, per_request, per_second</td>
+            <td><span class="badge badge-orange">Stub</span></td>
+          </tr>
+          <tr>
+            <td>Gemini</td>
+            <td>chat, embedding</td>
+            <td>per_token</td>
+            <td><span class="badge badge-orange">Stub</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Execute -->
+      <h2>Execute()</h2>
+      <div class="card">
+        <p>Формирует URL endpoint провайдера, добавляет auth header через <code>Vault.SignRequest()</code>, проксирует <code>SanitizedBody</code> и парсит ответ в <code>types.Response</code>.</p>
+        <p>Контекст должен поддерживать отмену (timeout). При ошибке провайдера возвращается ошибка с HTTP-статусом и телом ответа для диагностики.</p>
+      </div>
+
+      <!-- EstimateCost -->
+      <h2>EstimateCost()</h2>
+      <div class="card">
+        <p>Предварительная оценка стоимости для Budget Guard. Выбирает <code>BillingType</code> по <code>ServiceType</code> и параметрам запроса.</p>
+        <p>Для <code>per_token</code> оценка основана на количестве входных токенов и модели. Для <code>per_image</code> &mdash; на количестве запрашиваемых изображений. Для Ollama всегда возвращает нулевую стоимость.</p>
+      </div>
+
+      <!-- SupportedServices -->
+      <h2>SupportedServices()</h2>
+      <div class="card">
+        <p>Объявляет поддерживаемые <code>ServiceType</code> для проверки совместимости роутером. Router использует эту информацию, чтобы не направлять image-запросы к провайдеру, поддерживающему только chat.</p>
+      </div>
+
+      <!-- Registry -->
+      <h2>Registry</h2>
+      <div class="card">
+        <h3>Реестр провайдеров</h3>
+        <table>
+          <thead>
+            <tr><th>Метод</th><th>Описание</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Get(id)</code></td><td>Возвращает провайдер по ID. Ошибка если не зарегистрирован.</td></tr>
+            <tr><td><code>GetForService(serviceType)</code></td><td>Возвращает провайдеры, поддерживающие указанный тип сервиса.</td></tr>
+            <tr><td><code>Register(p)</code></td><td>Добавляет провайдер. Паникует при дублировании ID.</td></tr>
+            <tr><td><code>All()</code></td><td>Возвращает все зарегистрированные провайдеры.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Provider interface {
+    ID() types.ProviderID
+    SupportedServices() []types.ServiceType
+    Execute(ctx context.Context, req *types.SanitizedRequest) (*types.Response, error)
+    EstimateCost(req *types.ParsedRequest) (*types.CostEstimate, error)
+    HealthCheck(ctx context.Context) error
+}
+
+type Registry interface {
+    Get(id types.ProviderID) (Provider, error)
+    GetForService(serviceType types.ServiceType) []Provider
+    Register(p Provider)
+    All() []Provider
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

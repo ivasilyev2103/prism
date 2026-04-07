@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Policy — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html" class="active">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Policy &mdash; Движок политик</h1>
+          <p class="subtitle">Оркестратор: маршрутизация, бюджеты, failover</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/policy.html" class="active">RU</a>
+          <a href="../en/policy.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Единственный модуль, зависящий от <strong>всех остальных</strong>. Оркестрирует полный поток обработки запроса:</p>
+        <pre><code>privacy &rarr; route &rarr; budget &rarr; cache &rarr; execute &rarr; restore &rarr; record</code></pre>
+        <p>Все зависимости инжектируются через конструктор как интерфейсы. Никаких глобальных переменных.</p>
+      </div>
+
+      <!-- Routing -->
+      <h2>Routing</h2>
+      <div class="card">
+        <h3>Правила маршрутизации</h3>
+        <p>Правила проверяются <strong>сверху вниз</strong>, первое совпавшее применяется. Router проверяет совместимость: выбранный провайдер должен поддерживать <code>ServiceType</code> запроса.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Условия (<code>if</code>)</th>
+              <th>Описание</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>service_type</code></td><td>Тип AI-сервиса (chat, image, embedding, tts, 3d_model, stt, moderation)</td></tr>
+            <tr><td><code>privacy_score</code></td><td>Оценка приватности из Privacy Pipeline</td></tr>
+            <tr><td><code>tags</code></td><td>Теги из заголовка <code>X-Prism-Tags</code> или auto-detected</td></tr>
+            <tr><td><code>project_id</code></td><td>Explicit match по проекту</td></tr>
+            <tr><td><code>time_of_day</code></td><td>Например, дешёвые модели ночью</td></tr>
+          </tbody>
+        </table>
+        <table>
+          <thead>
+            <tr>
+              <th>Действия (<code>then</code>)</th>
+              <th>Описание</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>provider</code></td><td>Целевой провайдер (Router проверяет <code>SupportedServices()</code>)</td></tr>
+            <tr><td><code>model</code></td><td>Override модели</td></tr>
+            <tr><td><code>fallback</code></td><td>Провайдер при недоступности основного</td></tr>
+            <tr><td><code>max_tokens</code></td><td>Ограничение ответа (для chat)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Валидация -->
+      <h2>Валидация</h2>
+      <div class="card">
+        <h3>Router.Validate()</h3>
+        <p><code>Router.Validate()</code> вызывается при загрузке <code>routes.yaml</code> и обнаруживает проблемы конфигурации при старте, а не при первом запросе:</p>
+        <ul>
+          <li><strong>Опечатки в именах провайдеров</strong> &mdash; все <code>provider</code> и <code>fallback</code> должны быть зарегистрированы в Registry</li>
+          <li><strong>Несовместимость provider + service_type</strong> &mdash; провайдер не поддерживает указанный ServiceType</li>
+          <li><strong>Unreachable rules</strong> &mdash; правила после catch-all (правило без <code>if</code>) никогда не сработают</li>
+          <li><strong>Неизвестные service_types</strong> &mdash; опечатки в значениях <code>service_type</code></li>
+        </ul>
+      </div>
+
+      <!-- Budget Guard -->
+      <h2>Budget Guard</h2>
+      <div class="card">
+        <h3>Проверка бюджетов до отправки</h3>
+        <p>BudgetChecker использует <code>EstimateCost()</code> от провайдера для предварительной оценки стоимости. Порядок проверки &mdash; от конкретного к общему, срабатывает самый строгий:</p>
+        <pre><code>Запрос (project=X, provider=Y)
+    &darr;
+    estimate := provider.EstimateCost(req)
+    &darr;
+    &boxur;&boxh; проверить бюджет пары X &times; Y
+    &boxur;&boxh; проверить бюджет проекта X (все провайдеры)
+    &boxur;&boxh; проверить бюджет провайдера Y (все проекты)
+    &boxur;&boxh; проверить глобальный бюджет
+    &darr;
+    все в рамках         &rarr; пропустить
+    on_exceed=alert      &rarr; пропустить + уведомление
+    on_exceed=downgrade  &rarr; переключить на дешёвую модель
+    on_exceed=block      &rarr; 429 Too Many Requests</code></pre>
+        <p>Для subscription-провайдеров дополнительно проверяются квоты периода &mdash; при исчерпании возвращается <code>QuotaExceededError</code>.</p>
+      </div>
+
+      <!-- Failover -->
+      <h2>Failover</h2>
+      <div class="card">
+        <h3>Retry + Fallback</h3>
+        <p>Простая стратегия без exponential backoff:</p>
+        <pre><code>primary &rarr; fail &rarr; 1 retry &rarr; fallback &rarr; fail &rarr; 503 Service Unavailable</code></pre>
+        <p>При ошибке primary провайдера (timeout, 5xx) &mdash; один retry, затем переключение на fallback. Если оба провайдера недоступны &mdash; HTTP 503.</p>
+      </div>
+
+      <!-- Зависимости -->
+      <h2>Зависимости</h2>
+      <div class="card">
+        <h3>Deps struct</h3>
+        <p>Engine принимает все зависимости через интерфейсы в конструкторе:</p>
+        <pre><code>engine := policy.NewEngine(policy.Deps{
+    Vault:        vaultImpl,        // vault.Vault
+    Providers:    providerRegistry, // provider.Registry
+    Privacy:      privacyPipeline,  // privacy.Pipeline
+    BudgetCheck:  budgetChecker,    // policy.BudgetChecker
+    AuditLog:     auditLogger,      // audit.Logger
+    Cache:        semanticCache,    // cache.SemanticCache
+    CostTracker:  costTracker,      // cost.Tracker
+    RouterConfig: routesYAML,       // []byte (routes.yaml)
+})</code></pre>
+        <table>
+          <thead>
+            <tr>
+              <th>Зависимость</th>
+              <th>Интерфейс</th>
+              <th>Использование</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Vault</td><td><code>vault.Vault</code></td><td>SignRequest</td></tr>
+            <tr><td>Providers</td><td><code>provider.Registry</code></td><td>Get, GetForService, All</td></tr>
+            <tr><td>Privacy</td><td><code>privacy.Pipeline</code></td><td>Sanitize</td></tr>
+            <tr><td>BudgetCheck</td><td><code>policy.BudgetChecker</code></td><td>Check</td></tr>
+            <tr><td>AuditLog</td><td><code>audit.Logger</code></td><td>Log</td></tr>
+            <tr><td>Cache</td><td><code>cache.SemanticCache</code></td><td>Get, Set</td></tr>
+            <tr><td>CostTracker</td><td><code>cost.Tracker</code></td><td>Record</td></tr>
+            <tr><td>Failover</td><td><code>policy.Failover</code></td><td>Execute</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Пример routes.yaml -->
+      <h2>Пример routes.yaml</h2>
+      <pre><code>routes:
+  - name: "sensitive_data"
+    if:
+      privacy_score: "&gt;0.7"
+    then:
+      provider: ollama
+      fallback: claude-haiku
+
+  - name: "image_generation"
+    if:
+      service_type: image
+    then:
+      provider: openai            # DALL-E
+      fallback: ollama             # Stable Diffusion
+
+  - name: "embeddings_local"
+    if:
+      service_type: embedding
+    then:
+      provider: ollama             # nomic-embed-text
+      fallback: openai
+
+  - name: "cheap_tasks"
+    if:
+      service_type: chat
+      tags: ["classify", "autocomplete"]
+    then:
+      provider: gemini-flash
+
+  - name: "code_tasks"
+    if:
+      tags: ["code", "sql", "debug"]
+    then:
+      provider: claude-sonnet
+
+  - name: "default"
+    then:
+      provider: claude-haiku</code></pre>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Router interface {
+    // Route возвращает решение о маршрутизации.
+    // Правила проверяются сверху вниз, применяется первое совпавшее.
+    Route(ctx context.Context, req *types.SanitizedRequest) (*RoutingDecision, error)
+
+    // Validate проверяет корректность routing rules при загрузке.
+    Validate() []error
+}
+
+type BudgetChecker interface {
+    // Check проверяет все применимые бюджеты.
+    Check(ctx context.Context, projectID string, providerID types.ProviderID, estimate *types.CostEstimate) error
+}
+
+type Failover interface {
+    // Execute пытается выполнить fn с primary провайдером.
+    // При ошибке — один retry, затем fallback.
+    Execute(ctx context.Context, primary, fallback types.ProviderID, fn func(types.ProviderID) error) error
+}
+
+type RoutingDecision struct {
+    ProviderID    types.ProviderID
+    ModelOverride string
+    RuleName      string
+    FallbackID    types.ProviderID
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,32 @@
+routes:
+  - name: "sensitive_data"
+    if:
+      privacy_score: ">0.7"
+    then:
+      provider: ollama
+      fallback: claude
+
+  - name: "image_generation"
+    if:
+      service_type: image
+    then:
+      provider: openai
+      fallback: ollama
+
+  - name: "embeddings_local"
+    if:
+      service_type: embedding
+    then:
+      provider: ollama
+      fallback: openai
+
+  - name: "code_tasks"
+    if:
+      tags: ["code", "sql", "debug"]
+    then:
+      provider: claude
+
+  - name: "default"
+    then:
+      provider: claude
+      fallback: ollama

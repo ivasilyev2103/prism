@@ -1,0 +1,13 @@
+{
+  "description": "English person with email and phone",
+  "profile": "moderate",
+  "input_parts": [
+    {"role": "user", "content": "Contact John Smith at john.smith@example.com or +1-234-567-8901", "index": 0}
+  ],
+  "expected_original_not_in_sanitized": ["john.smith@example.com", "+1-234-567-8901"],
+  "expected_entities": [
+    {"type": "EMAIL", "score_min": 0.99},
+    {"type": "PHONE", "score_min": 0.85}
+  ],
+  "restore_check": true
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vault — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html" class="active">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Vault &mdash; Хранилище секретов</h1>
+          <p class="subtitle">Единственный модуль, знающий plaintext API-ключи провайдеров</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/vault.html" class="active">RU</a>
+          <a href="../en/vault.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Хранилище секретов с паттерном <strong>Sign-not-Expose</strong>. API-ключи шифруются AES-256-GCM per-record и никогда не покидают Vault в открытом виде.</p>
+        <p>Vault &mdash; единственная точка, через которую происходит доступ к API-ключам провайдеров. Ни один другой модуль не имеет доступа к plaintext значениям ключей.</p>
+      </div>
+
+      <!-- Хранение -->
+      <h2>Хранение</h2>
+      <div class="card">
+        <h3>SQLite + AES-256-GCM</h3>
+        <p>Хранилище построено на <code>modernc.org/sqlite</code> (pure Go, без CGO). Каждая запись шифруется отдельно с помощью AES-256-GCM. Формат хранения:</p>
+        <pre><code>nonce (12 байт) || ciphertext</code></pre>
+        <p>Per-record шифрование позволяет атомарно обновлять отдельные ключи без перешифрования всей базы.</p>
+      </div>
+
+      <!-- KDF -->
+      <h2>KDF</h2>
+      <div class="card">
+        <h3>Argon2id</h3>
+        <p>Параметры ключевой функции:</p>
+        <table>
+          <thead>
+            <tr><th>Параметр</th><th>Значение</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Итерации</td><td>3</td></tr>
+            <tr><td>Память</td><td>64 МБ</td></tr>
+            <tr><td>Потоки</td><td>4</td></tr>
+            <tr><td>Длина ключа</td><td>32 байт</td></tr>
+          </tbody>
+        </table>
+        <p>Соль хранится открыто в metadata. Производный ключ &mdash; только в RAM (mlock-pinned буфер).</p>
+      </div>
+
+      <!-- Sign-not-Expose -->
+      <h2>Sign-not-Expose</h2>
+      <div class="card">
+        <h3>Custom RoundTripper</h3>
+        <p>Паттерн Sign-not-Expose реализован через custom <code>http.RoundTripper</code>, который инжектирует Authorization header на уровне transport и зануляет его после записи в wire.</p>
+        <p>Plaintext ключ не задерживается в <code>http.Request.Header</code>. Вызывающий код никогда не получает доступ к значению ключа &mdash; только к подписанному запросу.</p>
+      </div>
+
+      <!-- Токены -->
+      <h2>Токены</h2>
+      <div class="card">
+        <h3>Аутентификация проектов</h3>
+        <p><code>ValidateToken()</code> использует <code>HMAC(token)</code> для lookup в БД + constant-time compare. Токены хранятся как HMAC хеши &mdash; plaintext никогда в БД.</p>
+        <p>TTL настраивается per-project. При истечении TTL токен автоматически инвалидируется.</p>
+      </div>
+
+      <!-- Ротация -->
+      <h2>Ротация</h2>
+      <div class="card">
+        <h3>Атомарная замена ключей</h3>
+        <p><code>RotateProviderKey()</code> атомарно заменяет ключ в транзакции. Старый ключ немедленно удаляется и зануляется. Во время ротации запросы к провайдеру блокируются до завершения транзакции.</p>
+      </div>
+
+      <!-- Безопасность памяти -->
+      <h2>Безопасность памяти</h2>
+      <div class="card">
+        <p><code>explicit_bzero()</code> &mdash; best-effort в Go. GC может скопировать данные до зануления.</p>
+        <p>Реальная граница безопасности &mdash; process isolation + mlock. Prism биндится только на <code>127.0.0.1</code>, а mTLS обеспечивает защиту на уровне процессов.</p>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Vault interface {
+    SignRequest(ctx context.Context, projectID string, providerID types.ProviderID, req *http.Request) error
+    RegisterProject(projectID string, allowedProviders []types.ProviderID, tokenTTL time.Duration) (token string, err error)
+    ValidateToken(token string) (projectID string, err error)
+    RevokeToken(token string) error
+    AddProvider(providerID types.ProviderID, apiKey string, allowedProjects []string) error
+    RotateProviderKey(providerID types.ProviderID, newAPIKey string) error
+    RemoveProvider(providerID types.ProviderID) error
+    Close() error
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

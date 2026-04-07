@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audit &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html" class="active">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Audit &mdash; Audit Log</h1>
+          <p class="subtitle">Append-only log with HMAC chain for tamper detection</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/audit.html">RU</a>
+          <a href="../en/audit.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>Append-only log of request metadata. The audit module <strong>never logs request or response bodies</strong> &mdash; only structured metadata about each request passing through Prism.</p>
+        <p>Every record is linked to the previous one via an HMAC chain, making any tampering or deletion immediately detectable.</p>
+      </div>
+
+      <!-- HMAC Chain -->
+      <h2>HMAC Chain</h2>
+      <div class="card">
+        <h3>Tamper Detection</h3>
+        <p>Each audit record includes an HMAC computed as:</p>
+        <pre><code>HMAC = SHA256(serialized_record || prev_hmac)</code></pre>
+        <p>The HMAC key is derived from the master password via <strong>HKDF</strong> with info string <code>"prism-audit-hmac"</code>, separate from the vault encryption key. This ensures the audit chain uses an independent cryptographic key.</p>
+        <p><code>VerifyChain()</code> walks records over a time range and recomputes each HMAC to verify integrity. A broken chain indicates tampering or data corruption.</p>
+      </div>
+
+      <!-- WORM Semantics -->
+      <h2>WORM Semantics</h2>
+      <div class="card">
+        <h3>Write Once, Read Many</h3>
+        <p>SQLite triggers prevent <code>UPDATE</code> and <code>DELETE</code> operations on the audit table:</p>
+        <pre><code>CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit log is immutable: UPDATE not allowed');
+END;
+
+CREATE TRIGGER audit_no_delete BEFORE DELETE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit log is immutable: DELETE not allowed');
+END;</code></pre>
+        <p>The primary defense against tampering is the HMAC chain; SQLite triggers serve as an additional barrier for defense in depth.</p>
+      </div>
+
+      <!-- Logged Fields -->
+      <h2>Logged Fields</h2>
+      <table>
+        <thead>
+          <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>TEXT</td><td>Unique request identifier</td></tr>
+          <tr><td><code>ts</code></td><td>INTEGER</td><td>Unix timestamp</td></tr>
+          <tr><td><code>project_id</code></td><td>TEXT</td><td>Source project</td></tr>
+          <tr><td><code>provider_id</code></td><td>TEXT</td><td>Target provider</td></tr>
+          <tr><td><code>service_type</code></td><td>TEXT</td><td>AI service type (chat, image, etc.)</td></tr>
+          <tr><td><code>model</code></td><td>TEXT</td><td>Model used</td></tr>
+          <tr><td><code>input_tokens</code></td><td>INTEGER</td><td>Tokens sent</td></tr>
+          <tr><td><code>output_tokens</code></td><td>INTEGER</td><td>Tokens received</td></tr>
+          <tr><td><code>images_count</code></td><td>INTEGER</td><td>Images generated</td></tr>
+          <tr><td><code>audio_seconds</code></td><td>REAL</td><td>Audio duration processed</td></tr>
+          <tr><td><code>compute_units</code></td><td>REAL</td><td>Compute units consumed</td></tr>
+          <tr><td><code>cost_usd</code></td><td>REAL</td><td>Calculated cost in USD</td></tr>
+          <tr><td><code>billing_type</code></td><td>TEXT</td><td>Billing model applied</td></tr>
+          <tr><td><code>latency_ms</code></td><td>INTEGER</td><td>End-to-end latency</td></tr>
+          <tr><td><code>privacy_score</code></td><td>REAL</td><td>PII risk score (0.0 &ndash; 1.0)</td></tr>
+          <tr><td><code>pii_entities</code></td><td>INTEGER</td><td>Number of PII entities detected</td></tr>
+          <tr><td><code>cache_hit</code></td><td>BOOLEAN</td><td>Whether cache was used</td></tr>
+          <tr><td><code>route_matched</code></td><td>TEXT</td><td>Name of the matched routing rule</td></tr>
+          <tr><td><code>status</code></td><td>TEXT</td><td>Request outcome (ok, error, budget_blocked, cache_hit)</td></tr>
+          <tr><td><code>hmac</code></td><td>TEXT</td><td>HMAC chain hash</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ServiceType Filtering -->
+      <h2>ServiceType Filtering</h2>
+      <div class="card">
+        <p>The audit log supports filtering by <code>service_type</code>, enabling analytics breakdown by AI service category. Combined with project and provider filters, this allows detailed cost and usage analysis per service type over any time period.</p>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Logger interface {
+    // Log writes a record. The operation is append-only, modification is impossible.
+    // Automatically computes HMAC: hash(content || prev_hmac).
+    Log(ctx context.Context, r *types.RequestRecord) error
+
+    // Query returns records with filtering (without request bodies).
+    Query(ctx context.Context, filter *Filter) ([]*types.RequestRecord, error)
+
+    // VerifyChain verifies HMAC chain integrity for a given period.
+    // Returns nil if the chain is intact.
+    VerifyChain(ctx context.Context, from, to time.Time) error
+}
+
+type Filter struct {
+    ProjectID   string
+    ProviderID  types.ProviderID
+    ServiceType types.ServiceType
+    From        time.Time
+    To          time.Time
+    Status      string
+    Limit       int
+    Offset      int
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html" class="active">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Privacy &mdash; PII Obfuscation Pipeline</h1>
+          <p class="subtitle">Tiered PII detection: Regex &rarr; Ollama NER &rarr; Presidio</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/privacy.html">RU</a>
+          <a href="../en/privacy.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>Detects PII in text parts of requests and replaces them with placeholders before cloud transmission. Reversible obfuscation &mdash; original data is restored in the response.</p>
+        <p>Works only with <code>TextParts</code> extracted at the Ingress level. Binary data (images, audio, 3D models) is not scanned.</p>
+      </div>
+
+      <!-- Tiered Architecture -->
+      <h2>Tiered Architecture</h2>
+      <div class="card">
+        <h3>Three-tier Detection Architecture</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th>Detector</th>
+              <th>Coverage</th>
+              <th>Dependencies</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-green">1</span></td>
+              <td>RegexDetector</td>
+              <td>~70% (email, phone, CC, SSN, IBAN, IP)</td>
+              <td>None</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-blue">2</span></td>
+              <td>+ OllamaDetector</td>
+              <td>~95% (+names, organizations, addresses)</td>
+              <td>Ollama</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-purple">3</span></td>
+              <td>+ PresidioDetector</td>
+              <td>Maximum</td>
+              <td>Ollama + Python</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Each subsequent tier extends the coverage of the previous one. Tier 1 runs autonomously with no external dependencies. Tier 2 adds NER via a local LLM. Tier 3 connects the full-featured Presidio NER engine.</p>
+      </div>
+
+      <!-- CompositeDetector -->
+      <h2>CompositeDetector</h2>
+      <div class="card">
+        <p>Merges results from multiple detectors: union of all found entities, max score per overlap. If two detectors find PII at overlapping positions, the result with the highest confidence is selected.</p>
+        <p>CompositeDetector is the primary detector used by the Pipeline. Specific detectors (Regex, Ollama, Presidio) are plugged in as backends.</p>
+      </div>
+
+      <!-- Substitution -->
+      <h2>Substitution</h2>
+      <div class="card">
+        <h3>Placeholder Format</h3>
+        <pre><code>[TYPE_reqID8_N]</code></pre>
+        <p>Where <code>TYPE</code> is the PII type (PERSON, EMAIL, ...), <code>reqID8</code> is the first 8 characters of the request ID, and <code>N</code> is the sequence number.</p>
+        <p>Prompt injection protection: during restoration, only placeholders matching the current request's <code>reqID8</code> are replaced. Foreign placeholders remain untouched.</p>
+      </div>
+
+      <!-- Map Table -->
+      <h2>Map Table</h2>
+      <div class="card">
+        <h3>PII Mapping Storage</h3>
+        <p>The Map Table (placeholder &harr; original value mapping) is stored <strong>in RAM only</strong>, inside the <code>RestoreFunc</code> closure.</p>
+        <p>The Map Table is never passed between modules and never persisted to disk. It is destroyed after the first call to <code>RestoreFunc</code> &mdash; repeated restoration is impossible.</p>
+      </div>
+
+      <!-- Fail-closed vs Pass-through -->
+      <h2>Fail-closed vs Pass-through</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Provider</th><th>Mode</th><th>Behavior on Detector Error</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Cloud (Claude, OpenAI, Gemini)</td>
+              <td><span class="badge badge-red">fail-closed</span></td>
+              <td>Request is rejected. Data does not leave the machine.</td>
+            </tr>
+            <tr>
+              <td>Local (Ollama)</td>
+              <td><span class="badge badge-green">pass-through</span></td>
+              <td>Request is proxied without obfuscation. Data does not leave the machine.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>For cloud providers, security takes priority over availability: if PII detection fails, the request is blocked. For local providers, data stays on the machine regardless.</p>
+      </div>
+
+      <!-- Presidio -->
+      <h2>Presidio</h2>
+      <div class="card">
+        <h3>Python Sidecar Connection</h3>
+        <p>Presidio runs as a separate process (Python sidecar). Communication:</p>
+        <table>
+          <thead>
+            <tr><th>Platform</th><th>Transport</th><th>Security</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Unix/Linux/macOS</td><td>Unix domain socket</td><td><code>chmod 600</code></td></tr>
+            <tr><td>Windows</td><td>Loopback TCP</td><td>TLS</td></tr>
+          </tbody>
+        </table>
+        <p>A semaphore limits the number of concurrent requests to Presidio to prevent overload.</p>
+      </div>
+
+      <!-- Profiles -->
+      <h2>Profiles</h2>
+      <div class="card">
+        <h3>Obfuscation Levels</h3>
+        <table>
+          <thead>
+            <tr><th>Profile</th><th>PII Types</th><th>min_score</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-red">strict</span></td>
+              <td>All PII types</td>
+              <td>0.5</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-orange">moderate</span></td>
+              <td>PERSON, EMAIL, CREDIT_CARD, SSN</td>
+              <td>0.85</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-green">off</span></td>
+              <td colspan="2">PII scanning disabled</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>The <code>strict</code> profile detects maximum PII with a low confidence threshold &mdash; false positives are possible. The <code>moderate</code> profile focuses on critical data types with a high threshold. The <code>off</code> profile disables obfuscation entirely.</p>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Pipeline interface {
+    Sanitize(ctx context.Context, parts []types.TextPart, rawBody json.RawMessage, profile Profile, customPatterns []Pattern) (*SanitizeResult, error)
+}
+
+type Detector interface {
+    Detect(ctx context.Context, text string, profile Profile) ([]Entity, error)
+    HealthCheck(ctx context.Context) error
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

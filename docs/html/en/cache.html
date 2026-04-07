@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cache &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html" class="active">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Cache &mdash; Semantic Cache</h1>
+          <p class="subtitle">Response caching with VP-tree vector index</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/cache.html">RU</a>
+          <a href="../en/cache.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>Caches responses to semantically similar requests, reducing cost and latency for repeated queries. Embeddings are generated locally via <strong>Ollama</strong> using the <code>nomic-embed-text</code> model &mdash; no data leaves the machine for cache operations.</p>
+        <p>A <strong>VP-tree</strong> (Vantage Point tree) provides O(log n) nearest-neighbor search over the embedding space.</p>
+      </div>
+
+      <!-- Algorithm -->
+      <h2>Algorithm</h2>
+      <div class="card">
+        <h3>Cache Lookup Flow</h3>
+        <pre><code>embed(text) -> cosine_similarity with cache
+  -> similarity > 0.95 -> HIT  -> return cached response
+  -> similarity < 0.95 -> MISS -> query provider -> store response</code></pre>
+        <p>The threshold of <strong>0.95</strong> ensures only near-identical requests produce cache hits, preventing semantic drift from returning incorrect responses.</p>
+      </div>
+
+      <!-- Cache Policy -->
+      <h2>Cache Policy</h2>
+      <table>
+        <thead>
+          <tr><th>ServiceType</th><th>Cached</th><th>TTL (seconds)</th><th>Reason</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>chat</code></td><td><span class="badge badge-green">Yes</span></td><td>3600</td><td>Deterministic at temperature=0</td></tr>
+          <tr><td><code>embedding</code></td><td><span class="badge badge-green">Yes</span></td><td>86400</td><td>Fully deterministic</td></tr>
+          <tr><td><code>image</code></td><td><span class="badge badge-red">No</span></td><td>&mdash;</td><td>Stochastic output</td></tr>
+          <tr><td><code>tts</code></td><td><span class="badge badge-orange">Configurable</span></td><td>86400</td><td>Depends on voice+text combination</td></tr>
+          <tr><td><code>3d_model</code></td><td><span class="badge badge-red">No</span></td><td>&mdash;</td><td>Stochastic output</td></tr>
+          <tr><td><code>stt</code></td><td><span class="badge badge-red">No</span></td><td>&mdash;</td><td>Audio input (not text-embeddable)</td></tr>
+          <tr><td><code>moderation</code></td><td><span class="badge badge-red">No</span></td><td>&mdash;</td><td>No caching benefit</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Encryption -->
+      <h2>Encryption</h2>
+      <div class="card">
+        <h3>Per-Entry AES-256-GCM</h3>
+        <p>Cached responses are stored in sanitized form (PII replaced with placeholders). The PII mapping table that enables restoration is encrypted per-entry using <strong>AES-256-GCM</strong>.</p>
+        <p>PII never appears in plaintext on disk. Even if the cache database is compromised, the actual PII values remain encrypted.</p>
+      </div>
+
+      <!-- VP-Tree -->
+      <h2>VP-Tree</h2>
+      <div class="card">
+        <h3>In-Memory Vector Index</h3>
+        <p>The VP-tree (Vantage Point tree) is an in-memory spatial data structure optimized for nearest-neighbor search in metric spaces. It provides <strong>O(log n)</strong> lookup time for finding semantically similar cached entries.</p>
+        <p>SQLite serves as the persistent backend &mdash; on startup, all entry embeddings are loaded into the VP-tree. New entries are added to both the tree and SQLite simultaneously.</p>
+      </div>
+
+      <!-- Degradation -->
+      <h2>Degradation</h2>
+      <div class="card">
+        <h3>Graceful Fallback</h3>
+        <p>If Ollama is unavailable (down, unreachable, or slow):</p>
+        <ul>
+          <li><code>Get()</code> returns a cache miss &mdash; the request proceeds to the provider as normal</li>
+          <li><code>Set()</code> is a no-op &mdash; the response is not cached</li>
+        </ul>
+        <p>The cache never blocks or fails a request. It only improves performance when available.</p>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type SemanticCache interface {
+    // Get looks for a semantically similar request in the cache.
+    // Returns (nil, nil) on miss or if caching is disabled for this ServiceType.
+    Get(ctx context.Context, req *types.SanitizedRequest) (*types.Response, error)
+
+    // Set saves a request and response in the cache.
+    // For ServiceType with disabled caching - no-op.
+    Set(ctx context.Context, req *types.SanitizedRequest, resp *types.Response) error
+
+    // Invalidate removes entries by projectID (e.g., on privacy settings change).
+    Invalidate(ctx context.Context, projectID string) error
+}
+
+type Embedder interface {
+    // Embed returns an embedding for the text.
+    // Implementation: nomic-embed-text via Ollama (locally).
+    Embed(ctx context.Context, text string) ([]float32, error)
+
+    // HealthCheck verifies Ollama availability.
+    HealthCheck(ctx context.Context) error
+}
+
+type CachePolicy struct {
+    ServiceType types.ServiceType
+    Enabled     bool
+    TTL         int // seconds; 0 = default
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

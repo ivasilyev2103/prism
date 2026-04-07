@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Provider &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html" class="active">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Provider &mdash; Provider Adapters</h1>
+          <p class="subtitle">Normalizing different AI APIs to a unified Provider interface</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/provider.html">RU</a>
+          <a href="../en/provider.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>Pass-through proxy to AI providers. Receives <code>SanitizedBody</code> and proxies to the provider API with minimal changes (auth header, endpoint rewrite).</p>
+        <p>Provider does not modify request content &mdash; it only adds authentication via Vault and constructs the correct URL endpoint.</p>
+      </div>
+
+      <!-- Implementations -->
+      <h2>Implementations</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>ServiceTypes</th>
+            <th>BillingType</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Claude</td>
+            <td>chat</td>
+            <td>per_token</td>
+            <td><span class="badge badge-green">Full</span></td>
+          </tr>
+          <tr>
+            <td>Ollama</td>
+            <td>chat, embedding, image</td>
+            <td>free (local)</td>
+            <td><span class="badge badge-green">Full</span></td>
+          </tr>
+          <tr>
+            <td>OpenAI</td>
+            <td>chat, image, embedding, tts, stt, moderation</td>
+            <td>per_token, per_image, per_request, per_second</td>
+            <td><span class="badge badge-orange">Stub</span></td>
+          </tr>
+          <tr>
+            <td>Gemini</td>
+            <td>chat, embedding</td>
+            <td>per_token</td>
+            <td><span class="badge badge-orange">Stub</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Execute -->
+      <h2>Execute()</h2>
+      <div class="card">
+        <p>Builds the provider URL endpoint, adds the auth header via <code>Vault.SignRequest()</code>, proxies <code>SanitizedBody</code>, and parses the response into <code>types.Response</code>.</p>
+        <p>The context must support cancellation (timeout). On provider error, an error is returned with the HTTP status and response body for diagnostics.</p>
+      </div>
+
+      <!-- EstimateCost -->
+      <h2>EstimateCost()</h2>
+      <div class="card">
+        <p>Pre-response cost estimate for the Budget Guard. Selects <code>BillingType</code> per <code>ServiceType</code> and request parameters.</p>
+        <p>For <code>per_token</code>, the estimate is based on input token count and model. For <code>per_image</code> &mdash; on the number of requested images. For Ollama, always returns zero cost.</p>
+      </div>
+
+      <!-- SupportedServices -->
+      <h2>SupportedServices()</h2>
+      <div class="card">
+        <p>Declares supported <code>ServiceType</code> values for Router compatibility checking. The Router uses this information to avoid sending image requests to a provider that only supports chat.</p>
+      </div>
+
+      <!-- Registry -->
+      <h2>Registry</h2>
+      <div class="card">
+        <h3>Provider Registry</h3>
+        <table>
+          <thead>
+            <tr><th>Method</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Get(id)</code></td><td>Returns a provider by ID. Error if not registered.</td></tr>
+            <tr><td><code>GetForService(serviceType)</code></td><td>Returns providers that support the given service type.</td></tr>
+            <tr><td><code>Register(p)</code></td><td>Adds a provider. Panics on duplicate ID.</td></tr>
+            <tr><td><code>All()</code></td><td>Returns all registered providers.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Provider interface {
+    ID() types.ProviderID
+    SupportedServices() []types.ServiceType
+    Execute(ctx context.Context, req *types.SanitizedRequest) (*types.Response, error)
+    EstimateCost(req *types.ParsedRequest) (*types.CostEstimate, error)
+    HealthCheck(ctx context.Context) error
+}
+
+type Registry interface {
+    Get(id types.ProviderID) (Provider, error)
+    GetForService(serviceType types.ServiceType) []Provider
+    Register(p Provider)
+    All() []Provider
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

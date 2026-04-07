@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vault &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html" class="active">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Vault &mdash; Secrets Storage</h1>
+          <p class="subtitle">The only module that knows plaintext provider API keys</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/vault.html">RU</a>
+          <a href="../en/vault.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>Secret storage implementing the <strong>Sign-not-Expose</strong> pattern. API keys are encrypted with AES-256-GCM per-record and never leave Vault in plaintext.</p>
+        <p>Vault is the single point through which all provider API key access occurs. No other module has access to plaintext key values.</p>
+      </div>
+
+      <!-- Storage -->
+      <h2>Storage</h2>
+      <div class="card">
+        <h3>SQLite + AES-256-GCM</h3>
+        <p>Storage is built on <code>modernc.org/sqlite</code> (pure Go, no CGO). Each record is encrypted individually with AES-256-GCM. Storage format:</p>
+        <pre><code>nonce (12 bytes) || ciphertext</code></pre>
+        <p>Per-record encryption allows atomically updating individual keys without re-encrypting the entire database.</p>
+      </div>
+
+      <!-- Key Derivation -->
+      <h2>Key Derivation</h2>
+      <div class="card">
+        <h3>Argon2id</h3>
+        <p>Key derivation function parameters:</p>
+        <table>
+          <thead>
+            <tr><th>Parameter</th><th>Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Iterations</td><td>3</td></tr>
+            <tr><td>Memory</td><td>64 MB</td></tr>
+            <tr><td>Threads</td><td>4</td></tr>
+            <tr><td>Key length</td><td>32 bytes</td></tr>
+          </tbody>
+        </table>
+        <p>Salt is stored openly in metadata. Derived encryption key resides in RAM only (mlock-pinned buffer).</p>
+      </div>
+
+      <!-- Sign-not-Expose -->
+      <h2>Sign-not-Expose</h2>
+      <div class="card">
+        <h3>Custom RoundTripper</h3>
+        <p>The Sign-not-Expose pattern is implemented via a custom <code>http.RoundTripper</code> that injects the Authorization header at the transport level and zeroes it after the wire write.</p>
+        <p>The plaintext key never lingers in <code>http.Request.Header</code>. Calling code never gains access to the key value &mdash; only to the signed request.</p>
+      </div>
+
+      <!-- Tokens -->
+      <h2>Tokens</h2>
+      <div class="card">
+        <h3>Project Authentication</h3>
+        <p><code>ValidateToken()</code> uses <code>HMAC(token)</code> for DB lookup + constant-time compare. Tokens are stored as HMAC hashes &mdash; plaintext is never in the DB.</p>
+        <p>TTL is configurable per project. When TTL expires, the token is automatically invalidated.</p>
+      </div>
+
+      <!-- Key Rotation -->
+      <h2>Key Rotation</h2>
+      <div class="card">
+        <h3>Atomic Key Replacement</h3>
+        <p><code>RotateProviderKey()</code> atomically replaces the key in a single transaction. The old key is immediately deleted and zeroed. During rotation, requests to the provider are blocked until the transaction completes.</p>
+      </div>
+
+      <!-- Memory Safety -->
+      <h2>Memory Safety</h2>
+      <div class="card">
+        <p><code>explicit_bzero()</code> is best-effort in Go. The GC may copy data before zeroing.</p>
+        <p>The real security boundary is process isolation + mlock. Prism binds only to <code>127.0.0.1</code>, and mTLS provides protection at the process level.</p>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Vault interface {
+    SignRequest(ctx context.Context, projectID string, providerID types.ProviderID, req *http.Request) error
+    RegisterProject(projectID string, allowedProviders []types.ProviderID, tokenTTL time.Duration) (token string, err error)
+    ValidateToken(token string) (projectID string, err error)
+    RevokeToken(token string) error
+    AddProvider(providerID types.ProviderID, apiKey string, allowedProjects []string) error
+    RotateProviderKey(providerID types.ProviderID, newAPIKey string) error
+    RemoveProvider(providerID types.ProviderID) error
+    Close() error
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

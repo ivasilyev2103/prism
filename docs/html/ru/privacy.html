@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html" class="active">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Privacy &mdash; Конвейер обфускации PII</h1>
+          <p class="subtitle">Tiered PII detection: Regex &rarr; Ollama NER &rarr; Presidio</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/privacy.html" class="active">RU</a>
+          <a href="../en/privacy.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Обнаруживает PII в текстовых частях запросов и заменяет на placeholder'ы перед отправкой в облако. Обратимая обфускация &mdash; оригинальные данные восстанавливаются в ответе.</p>
+        <p>Работает только с <code>TextParts</code>, извлечёнными на уровне Ingress. Бинарные данные (изображения, аудио, 3D-модели) не сканируются.</p>
+      </div>
+
+      <!-- Tiered Architecture -->
+      <h2>Tiered Architecture</h2>
+      <div class="card">
+        <h3>Трёхуровневая архитектура детекции</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th>Детектор</th>
+              <th>Покрытие</th>
+              <th>Зависимости</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-green">1</span></td>
+              <td>RegexDetector</td>
+              <td>~70% (email, phone, CC, SSN, IBAN, IP)</td>
+              <td>Нет</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-blue">2</span></td>
+              <td>+ OllamaDetector</td>
+              <td>~95% (+имена, организации, адреса)</td>
+              <td>Ollama</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-purple">3</span></td>
+              <td>+ PresidioDetector</td>
+              <td>Максимальное</td>
+              <td>Ollama + Python</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Каждый следующий tier расширяет покрытие предыдущего. Tier 1 работает автономно без внешних зависимостей. Tier 2 добавляет NER через локальную LLM. Tier 3 подключает полнофункциональный NER-движок Presidio.</p>
+      </div>
+
+      <!-- CompositeDetector -->
+      <h2>CompositeDetector</h2>
+      <div class="card">
+        <p>Объединяет результаты нескольких детекторов: union всех найденных сущностей, max score per overlap. Если два детектора нашли PII на перекрывающихся позициях, выбирается результат с наибольшей уверенностью.</p>
+        <p>CompositeDetector &mdash; основной детектор, используемый Pipeline. Конкретные детекторы (Regex, Ollama, Presidio) подключаются как плагины.</p>
+      </div>
+
+      <!-- Substitution -->
+      <h2>Substitution</h2>
+      <div class="card">
+        <h3>Формат placeholder'ов</h3>
+        <pre><code>[TYPE_reqID8_N]</code></pre>
+        <p>Где <code>TYPE</code> &mdash; тип PII (PERSON, EMAIL, ...), <code>reqID8</code> &mdash; первые 8 символов ID запроса, <code>N</code> &mdash; порядковый номер.</p>
+        <p>Защита от prompt injection: при восстановлении заменяются только placeholder'ы, совпадающие с <code>reqID8</code> текущего запроса. Чужие placeholder'ы остаются как есть.</p>
+      </div>
+
+      <!-- Map Table -->
+      <h2>Map Table</h2>
+      <div class="card">
+        <h3>Хранение маппинга PII</h3>
+        <p>Map Table (соответствие placeholder &harr; оригинальное значение) хранится <strong>только в RAM</strong>, в замыкании <code>RestoreFunc</code>.</p>
+        <p>Map Table никогда не передаётся между модулями и не сохраняется на диск. Уничтожается после первого вызова <code>RestoreFunc</code> &mdash; повторное восстановление невозможно.</p>
+      </div>
+
+      <!-- Fail-closed vs Pass-through -->
+      <h2>Fail-closed vs Pass-through</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr><th>Провайдер</th><th>Режим</th><th>Поведение при ошибке детектора</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Облачные (Claude, OpenAI, Gemini)</td>
+              <td><span class="badge badge-red">fail-closed</span></td>
+              <td>Запрос отклоняется. Данные не покидают машину.</td>
+            </tr>
+            <tr>
+              <td>Локальные (Ollama)</td>
+              <td><span class="badge badge-green">pass-through</span></td>
+              <td>Запрос проксируется без обфускации. Данные не покидают машину.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Для облачных провайдеров безопасность важнее доступности: если PII-детекция не сработала, запрос блокируется. Для локальных провайдеров данные остаются на машине в любом случае.</p>
+      </div>
+
+      <!-- Presidio -->
+      <h2>Presidio</h2>
+      <div class="card">
+        <h3>Подключение Python sidecar</h3>
+        <p>Presidio запускается как отдельный процесс (Python sidecar). Взаимодействие:</p>
+        <table>
+          <thead>
+            <tr><th>Платформа</th><th>Транспорт</th><th>Безопасность</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Unix/Linux/macOS</td><td>Unix domain socket</td><td><code>chmod 600</code></td></tr>
+            <tr><td>Windows</td><td>Loopback TCP</td><td>TLS</td></tr>
+          </tbody>
+        </table>
+        <p>Semaphore ограничивает количество параллельных запросов к Presidio для предотвращения перегрузки.</p>
+      </div>
+
+      <!-- Профили -->
+      <h2>Профили</h2>
+      <div class="card">
+        <h3>Уровни обфускации</h3>
+        <table>
+          <thead>
+            <tr><th>Профиль</th><th>Типы PII</th><th>min_score</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="badge badge-red">strict</span></td>
+              <td>Все типы PII</td>
+              <td>0.5</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-orange">moderate</span></td>
+              <td>PERSON, EMAIL, CREDIT_CARD, SSN</td>
+              <td>0.85</td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-green">off</span></td>
+              <td colspan="2">PII-сканирование отключено</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Профиль <code>strict</code> обнаруживает максимум PII с низким порогом уверенности &mdash; возможны ложные срабатывания. Профиль <code>moderate</code> фокусируется на критичных типах данных с высоким порогом. Профиль <code>off</code> полностью отключает обфускацию.</p>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Pipeline interface {
+    Sanitize(ctx context.Context, parts []types.TextPart, rawBody json.RawMessage, profile Profile, customPatterns []Pattern) (*SanitizeResult, error)
+}
+
+type Detector interface {
+    Detect(ctx context.Context, text string, profile Profile) ([]Entity, error)
+    HealthCheck(ctx context.Context) error
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

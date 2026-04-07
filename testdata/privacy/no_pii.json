@@ -1,0 +1,10 @@
+{
+  "description": "Text with no PII — should pass through unchanged",
+  "profile": "strict",
+  "input_parts": [
+    {"role": "user", "content": "What is the weather like today? Please write a poem about cats.", "index": 0}
+  ],
+  "expected_original_not_in_sanitized": [],
+  "expected_entities": [],
+  "restore_check": false
+}

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ingress — Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html" class="active">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Ingress &mdash; Входная точка</h1>
+          <p class="subtitle">Аутентификация, rate limiting, определение ServiceType, извлечение текста</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/ingress.html" class="active">RU</a>
+          <a href="../en/ingress.html">EN</a>
+        </div>
+      </div>
+
+      <!-- Назначение -->
+      <h2>Назначение</h2>
+      <div class="card">
+        <p>Первая линия защиты. Валидирует токен, применяет rate limit, определяет <code>ServiceType</code>, извлекает <code>TextParts</code> для PII-сканирования, сохраняет <code>RawBody</code>.</p>
+        <p>Ingress &mdash; единственная точка входа для всех запросов к Prism. Все запросы проходят через аутентификацию и rate limiting до любой дальнейшей обработки.</p>
+      </div>
+
+      <!-- ServiceType Detection -->
+      <h2>ServiceType Detection</h2>
+      <div class="card">
+        <h3>Определение типа сервиса по URL</h3>
+        <table>
+          <thead>
+            <tr><th>URL Path</th><th>ServiceType</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>/v1/chat/completions</code></td><td><span class="badge badge-blue">chat</span></td></tr>
+            <tr><td><code>/v1/images/generations</code></td><td><span class="badge badge-purple">image</span></td></tr>
+            <tr><td><code>/v1/embeddings</code></td><td><span class="badge badge-green">embedding</span></td></tr>
+            <tr><td><code>/v1/audio/speech</code></td><td><span class="badge badge-orange">tts</span></td></tr>
+            <tr><td><code>/v1/audio/transcriptions</code></td><td><span class="badge badge-orange">stt</span></td></tr>
+            <tr><td><code>/v1/moderations</code></td><td><span class="badge badge-red">moderation</span></td></tr>
+            <tr><td><code>X-Prism-Service: 3d_model</code></td><td><span class="badge badge-purple">3d_model</span></td></tr>
+          </tbody>
+        </table>
+        <p>Для нестандартных типов сервисов используется заголовок <code>X-Prism-Service</code>. Это позволяет поддерживать новые AI API без изменения маршрутизации по URL.</p>
+      </div>
+
+      <!-- TextParts Extraction -->
+      <h2>TextParts Extraction</h2>
+      <div class="card">
+        <h3>Извлечение текстовых частей per-ServiceType</h3>
+        <table>
+          <thead>
+            <tr><th>ServiceType</th><th>Источник TextParts</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>chat</code></td><td><code>messages[].content</code></td></tr>
+            <tr><td><code>image</code>, <code>3d_model</code></td><td><code>prompt</code></td></tr>
+            <tr><td><code>embedding</code>, <code>tts</code></td><td><code>input</code></td></tr>
+            <tr><td><code>stt</code></td><td>пусто (бинарные данные)</td></tr>
+            <tr><td><code>moderation</code></td><td><code>input</code></td></tr>
+          </tbody>
+        </table>
+        <p>Извлечённые <code>TextParts</code> передаются в Privacy Pipeline для PII-сканирования. Оригинальное тело запроса сохраняется как <code>json.RawMessage</code> для pass-through к провайдеру.</p>
+      </div>
+
+      <!-- Аутентификация -->
+      <h2>Аутентификация</h2>
+      <div class="card">
+        <h3>X-Prism-Token</h3>
+        <p>Каждый запрос должен содержать заголовок <code>X-Prism-Token</code>. Ingress передаёт токен в <code>Vault.ValidateToken()</code> для проверки.</p>
+        <p>Проверка выполняется через <code>HMAC(token)</code> lookup в БД + constant-time compare. Без валидного токена запрос отклоняется с кодом <strong>401 Unauthorized</strong>.</p>
+      </div>
+
+      <!-- Rate Limiting -->
+      <h2>Rate Limiting</h2>
+      <div class="card">
+        <h3>Token Bucket per projectID</h3>
+        <p>Rate limiter реализован по алгоритму Token Bucket &mdash; отдельный bucket для каждого <code>projectID</code>. Параметр <code>rate_limit_per_minute</code> настраивается в конфигурации проекта.</p>
+        <p>При превышении лимита возвращается <strong>429 Too Many Requests</strong>.</p>
+      </div>
+
+      <!-- Безопасность -->
+      <h2>Безопасность</h2>
+      <div class="card">
+        <p>Prism биндится только на <code>127.0.0.1</code> (loopback). Это исключает доступ к API извне машины.</p>
+        <p>Plaintext токены не хранятся в БД &mdash; только HMAC хеши. Сам Ingress не имеет доступа к API-ключам провайдеров.</p>
+      </div>
+
+      <!-- Интерфейс -->
+      <h2>Интерфейс</h2>
+      <pre><code>type Handler interface {
+    Handle(ctx context.Context, r *http.Request) (*types.ParsedRequest, error)
+}
+
+type RateLimiter interface {
+    Allow(projectID string) bool
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

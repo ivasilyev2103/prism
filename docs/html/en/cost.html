@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cost &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html" class="active">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Cost &mdash; Expense Tracking</h1>
+          <p class="subtitle">Cost tracking, budgets, subscription quotas</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/cost.html">RU</a>
+          <a href="../en/cost.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>Tracks expenses and quota consumption across all AI service requests. Supports many-to-many project-provider relationships with 5 billing models and a 4-level budget hierarchy.</p>
+        <p>All cost data is stored in SQLite with an in-memory write buffer to reduce contention under concurrent load.</p>
+      </div>
+
+      <!-- Billing Models -->
+      <h2>Billing Models</h2>
+      <table>
+        <thead>
+          <tr><th>BillingType</th><th>How Calculated</th><th>Examples</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>per_token</code></td><td>tokens * price/1M</td><td>Claude, GPT</td></tr>
+          <tr><td><code>per_image</code></td><td>images * price</td><td>DALL-E</td></tr>
+          <tr><td><code>per_request</code></td><td>fixed price</td><td>Moderation</td></tr>
+          <tr><td><code>per_second</code></td><td>compute_time * price</td><td>3D generation</td></tr>
+          <tr><td><code>subscription</code></td><td>period quotas</td><td>Claude Pro</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Write Buffer -->
+      <h2>Write Buffer</h2>
+      <div class="card">
+        <h3>In-memory Ring Buffer</h3>
+        <p>Cost records are accumulated in an in-memory ring buffer to avoid per-request SQLite writes. The buffer is flushed to disk every <strong>1 second</strong> or every <strong>100 records</strong>, whichever comes first.</p>
+        <p>Flush uses <code>BEGIN IMMEDIATE</code> + batch <code>INSERT</code> for atomicity. On graceful shutdown, <code>Flush()</code> is called to persist all pending records before the process exits.</p>
+      </div>
+
+      <!-- Budget Hierarchy -->
+      <h2>Budget Hierarchy</h2>
+      <div class="card">
+        <h3>4-Level Budget System</h3>
+        <p>Budgets are evaluated from most specific to most general. The strictest applicable budget wins:</p>
+        <table>
+          <thead>
+            <tr><th>Level</th><th>Scope</th><th>Priority</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>pair</code></td><td>project + provider</td><td>1 (highest)</td></tr>
+            <tr><td><code>project</code></td><td>all providers for a project</td><td>2</td></tr>
+            <tr><td><code>provider</code></td><td>all projects for a provider</td><td>3</td></tr>
+            <tr><td><code>global</code></td><td>entire system</td><td>4 (lowest)</td></tr>
+          </tbody>
+        </table>
+        <p>When a budget is exceeded, the configured action determines the response:</p>
+        <table>
+          <thead>
+            <tr><th>Action</th><th>Behavior</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>block</code></td><td>Return HTTP 429 (Too Many Requests)</td></tr>
+            <tr><td><code>downgrade_model</code></td><td>Switch to a cheaper model</td></tr>
+            <tr><td><code>alert</code></td><td>Allow the request but emit a warning</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Subscription Tracking -->
+      <h2>Subscription Tracking</h2>
+      <div class="card">
+        <h3>Quota Monitoring</h3>
+        <p>For subscription-billed providers (e.g., Claude Pro), the cost module monitors quota usage per billing period. Tracked dimensions:</p>
+        <ul>
+          <li><strong>requests</strong> &mdash; total request count</li>
+          <li><strong>input_tokens</strong> &mdash; tokens sent to the provider</li>
+          <li><strong>output_tokens</strong> &mdash; tokens received from the provider</li>
+          <li><strong>images</strong> &mdash; generated images count</li>
+        </ul>
+        <p>Quotas reset on <code>sub_reset_day</code> of each month. When a quota is exhausted, <code>QuotaExceededError</code> is returned before sending the request.</p>
+      </div>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Tracker interface {
+    // Record saves metrics of a completed request (async-safe).
+    // Written to an in-memory buffer, flushed to SQLite in batches.
+    Record(ctx context.Context, r *types.RequestRecord) error
+
+    // Summary returns aggregated data for a period.
+    // projectID and providerID are optional (empty string = all).
+    Summary(ctx context.Context, projectID string, providerID types.ProviderID, from, to time.Time) (*Summary, error)
+
+    // QuotaUsage returns current subscription quota consumption.
+    QuotaUsage(ctx context.Context, providerID types.ProviderID) (*QuotaUsage, error)
+
+    // Flush forcefully writes the buffer to SQLite (called on graceful shutdown).
+    Flush(ctx context.Context) error
+}
+
+type Summary struct {
+    TotalUSD        float64
+    RequestsCount   int64
+    CacheSavingsUSD float64
+    ByProvider      map[types.ProviderID]*ProviderSummary
+    ByProject       map[string]*ProjectSummary
+    ByPair          map[string]*PairSummary // key: "projectID x providerID"
+}
+
+type QuotaUsage struct {
+    ProviderID        types.ProviderID
+    PeriodStart       time.Time
+    PeriodEnd         time.Time
+    RequestsUsed      int64
+    RequestsLimit     *int64 // nil = unlimited
+    InputTokensUsed   int64
+    InputTokensLimit  *int64
+    OutputTokensUsed  int64
+    OutputTokensLimit *int64
+    ImagesUsed        int64
+    ImagesLimit       *int64
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

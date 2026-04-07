@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Policy &mdash; Prism Docs</title>
+  <link rel="stylesheet" href="../_shared/style.css">
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="../index.html">Overview</a>
+        <div class="group-title">Modules</div>
+        <a href="vault.html">Vault</a>
+        <a href="provider.html">Provider</a>
+        <a href="ingress.html">Ingress</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="cost.html">Cost</a>
+        <a href="audit.html">Audit</a>
+        <a href="cache.html">Cache</a>
+        <a href="policy.html" class="active">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="module-header">
+        <div>
+          <h1>Policy &mdash; Policy Engine</h1>
+          <p class="subtitle">Orchestrator: routing, budgets, failover</p>
+        </div>
+        <div class="lang-switch">
+          <a href="../ru/policy.html">RU</a>
+          <a href="../en/policy.html" class="active">EN</a>
+        </div>
+      </div>
+
+      <!-- Purpose -->
+      <h2>Purpose</h2>
+      <div class="card">
+        <p>The <strong>only module that depends on all others</strong>. Policy Engine orchestrates the full request processing pipeline:</p>
+        <pre><code>privacy -> route -> budget -> cache -> execute -> restore -> record</code></pre>
+        <p>All dependencies are injected via interfaces &mdash; no global state, no concrete type imports from other packages.</p>
+      </div>
+
+      <!-- Routing -->
+      <h2>Routing</h2>
+      <div class="card">
+        <h3>Rule-Based Provider Selection</h3>
+        <p>Routing rules are defined in <code>routes.yaml</code> and checked <strong>top-to-bottom</strong>. The first matching rule is applied.</p>
+        <p><strong>Conditions</strong> (all optional, combined with AND):</p>
+        <table>
+          <thead>
+            <tr><th>Condition</th><th>Description</th><th>Example</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>service_type</code></td><td>AI service category</td><td><code>image</code>, <code>chat</code>, <code>embedding</code></td></tr>
+            <tr><td><code>privacy_score</code></td><td>PII risk threshold</td><td><code>&gt;0.7</code>, <code>&gt;=0.5</code></td></tr>
+            <tr><td><code>tags</code></td><td>Request tags (any match)</td><td><code>["code", "sql"]</code></td></tr>
+            <tr><td><code>project_id</code></td><td>Source project</td><td><code>my-app</code></td></tr>
+          </tbody>
+        </table>
+        <p><strong>Actions</strong> (applied when rule matches):</p>
+        <table>
+          <thead>
+            <tr><th>Action</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>provider</code></td><td>Target provider ID</td></tr>
+            <tr><td><code>model</code></td><td>Override model (optional)</td></tr>
+            <tr><td><code>fallback</code></td><td>Fallback provider on failure</td></tr>
+            <tr><td><code>max_tokens</code></td><td>Token limit override</td></tr>
+          </tbody>
+        </table>
+        <p>A rule without conditions (<code>if</code> omitted) acts as a <strong>catch-all default</strong> and must be the last rule.</p>
+      </div>
+
+      <!-- Validation -->
+      <h2>Validation</h2>
+      <div class="card">
+        <h3>Load-Time Checks</h3>
+        <p><code>Router.Validate()</code> is called at startup to detect configuration errors before any requests are processed:</p>
+        <ul>
+          <li>Typos in provider names (provider not found in registry)</li>
+          <li>Provider + service_type incompatibility (provider does not support the service)</li>
+          <li>Unreachable rules (rules placed after a catch-all)</li>
+          <li>Unknown service_types (not in the known set)</li>
+          <li>Missing default route (no catch-all rule)</li>
+        </ul>
+        <p>All errors are returned as a list, allowing operators to fix all issues at once.</p>
+      </div>
+
+      <!-- Budget Guard -->
+      <h2>Budget Guard</h2>
+      <div class="card">
+        <h3>Pre-Send Budget Verification</h3>
+        <p>Before sending any request to a provider, the engine checks budgets using the provider's <code>EstimateCost()</code> method. The 4-level budget hierarchy is evaluated:</p>
+        <pre><code>global -> project -> provider -> project x provider pair</code></pre>
+        <p>The <strong>strictest budget wins</strong>. If any applicable budget would be exceeded by the estimated cost, the request is blocked before it reaches the provider.</p>
+      </div>
+
+      <!-- Failover -->
+      <h2>Failover</h2>
+      <div class="card">
+        <h3>Simple Retry + Fallback</h3>
+        <p>The failover strategy is deliberately simple:</p>
+        <pre><code>primary -> fail -> 1 retry -> fallback provider
+                                  |
+                            both fail -> 503</code></pre>
+        <p>There is <strong>no exponential backoff</strong>. If the primary provider fails twice and the fallback also fails, the request returns HTTP 503 (Service Unavailable).</p>
+      </div>
+
+      <!-- Dependencies -->
+      <h2>Dependencies</h2>
+      <div class="card">
+        <h3>Deps Struct</h3>
+        <p>All dependencies are injected through the <code>Deps</code> struct. Every field is an interface &mdash; concrete implementations are provided at initialization:</p>
+        <pre><code>type Deps struct {
+    Privacy     privacy.Pipeline      // PII detection + sanitization
+    Router      Router                // Rule-based provider selection
+    BudgetCheck BudgetChecker         // 4-level budget hierarchy
+    Providers   provider.Registry     // Provider registry
+    CostTracker cost.Tracker          // Expense recording
+    AuditLog    audit.Logger          // Append-only audit log
+    Cache       cache.SemanticCache   // Semantic cache (may be nil)
+    Failover    Failover              // Retry + fallback
+}</code></pre>
+      </div>
+
+      <!-- Example routes.yaml -->
+      <h2>Example routes.yaml</h2>
+      <pre><code>routes:
+  - name: "sensitive_data"
+    if:
+      privacy_score: ">0.7"
+    then:
+      provider: ollama
+      fallback: claude
+
+  - name: "image_generation"
+    if:
+      service_type: image
+    then:
+      provider: openai
+      fallback: ollama
+
+  - name: "embeddings_local"
+    if:
+      service_type: embedding
+    then:
+      provider: ollama
+      fallback: openai
+
+  - name: "code_tasks"
+    if:
+      tags: ["code", "sql", "debug"]
+    then:
+      provider: claude
+
+  - name: "default"
+    then:
+      provider: claude
+      fallback: ollama</code></pre>
+
+      <!-- Interface -->
+      <h2>Interface</h2>
+      <pre><code>type Router interface {
+    // Route returns a routing decision.
+    // Rules are checked top-down, the first match is applied.
+    Route(ctx context.Context, req *types.SanitizedRequest) (*RoutingDecision, error)
+
+    // Validate checks correctness of routing rules at configuration load time.
+    // Returns a list of errors: typos, unreachable rules, incompatible provider+service.
+    Validate() []error
+}
+
+type BudgetChecker interface {
+    // Check verifies all applicable budgets (global, project, provider, pair).
+    // Returns BudgetExceededError or QuotaExceededError on exceeding.
+    Check(ctx context.Context, projectID string, providerID types.ProviderID, estimate *types.CostEstimate) error
+}
+
+type Failover interface {
+    // Execute tries to execute fn with the primary provider.
+    // On error (timeout, 5xx) - one retry, then fallback provider.
+    Execute(ctx context.Context, primary, fallback types.ProviderID, fn func(types.ProviderID) error) error
+}
+
+type RoutingDecision struct {
+    ProviderID    types.ProviderID
+    ModelOverride string            // "" = use from request
+    RuleName      string            // name of the matched rule
+    FallbackID    types.ProviderID
+}</code></pre>
+    </main>
+  </div>
+</body>
+</html>

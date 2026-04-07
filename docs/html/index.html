@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prism — LocalAI Gateway Documentation</title>
+  <link rel="stylesheet" href="_shared/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script src="_shared/diagram.js"></script>
+</head>
+<body>
+  <div class="page">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo"><span>P</span> Prism</div>
+      <nav>
+        <a href="index.html" class="active">Overview</a>
+
+        <div class="group-title">Modules (EN)</div>
+        <a href="en/vault.html">Vault</a>
+        <a href="en/provider.html">Provider</a>
+        <a href="en/ingress.html">Ingress</a>
+        <a href="en/privacy.html">Privacy</a>
+        <a href="en/cost.html">Cost</a>
+        <a href="en/audit.html">Audit</a>
+        <a href="en/cache.html">Cache</a>
+        <a href="en/policy.html">Policy</a>
+
+        <div class="group-title">Modules (RU)</div>
+        <a href="ru/vault.html">Vault</a>
+        <a href="ru/provider.html">Provider</a>
+        <a href="ru/ingress.html">Ingress</a>
+        <a href="ru/privacy.html">Privacy</a>
+        <a href="ru/cost.html">Cost</a>
+        <a href="ru/audit.html">Audit</a>
+        <a href="ru/cache.html">Cache</a>
+        <a href="ru/policy.html">Policy</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="hero">
+        <h1>Prism</h1>
+        <p class="subtitle">LocalAI Gateway &mdash; privacy-first, cost-controlled, smart-routed AI proxy</p>
+      </div>
+
+      <div class="features">
+        <div class="feature">
+          <div class="icon">&#128274;</div>
+          <h3>Privacy-First</h3>
+          <p>PII obfuscated before reaching the cloud. Tiered detection: Regex, Ollama NER, Presidio.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">&#128176;</div>
+          <h3>Cost Control</h3>
+          <p>4-level budget hierarchy. Per-token, per-image, subscription billing. Real-time tracking.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">&#128268;</div>
+          <h3>Smart Routing</h3>
+          <p>Rule-based routing with ServiceType awareness. Automatic failover between providers.</p>
+        </div>
+      </div>
+
+      <h2>Architecture</h2>
+      <p>Click any module to view its documentation. The diagram shows the data flow for a typical request.</p>
+
+      <div class="diagram-container">
+        <pre class="mermaid">
+flowchart TD
+    App["Local Application"] -->|"POST /v1/..."| ingress["Ingress<br/><small>Auth + Rate Limit + Parse</small>"]
+    ingress --> privacy["Privacy Pipeline<br/><small>PII Detection + Substitution</small>"]
+    privacy --> policy["Policy Engine<br/><small>Route + Budget + Cache</small>"]
+    policy --> cache["Semantic Cache<br/><small>VP-Tree + Embeddings</small>"]
+    policy --> vault["Vault<br/><small>Sign-not-Expose</small>"]
+    vault --> provider["Provider Adapters<br/><small>Claude / Ollama / OpenAI / Gemini</small>"]
+    provider -->|Response| policy
+    policy --> cost["Cost Tracker<br/><small>Budgets + Billing</small>"]
+    policy --> audit["Audit Log<br/><small>HMAC Chain + WORM</small>"]
+    policy -->|Restored Response| App
+
+    style ingress fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style privacy fill:#238636,stroke:#3fb950,color:#fff
+    style policy fill:#8b5cf6,stroke:#bc8cff,color:#fff
+    style vault fill:#da3633,stroke:#f85149,color:#fff
+    style provider fill:#d29922,stroke:#e3b341,color:#fff
+    style cost fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style audit fill:#238636,stroke:#3fb950,color:#fff
+    style cache fill:#8b5cf6,stroke:#bc8cff,color:#fff
+        </pre>
+      </div>
+
+      <h2>Supported Service Types</h2>
+      <div class="svc-grid">
+        <div class="svc-card">
+          <div class="name">chat</div>
+          <div class="desc">LLM chat completions (Claude, GPT, Ollama)</div>
+        </div>
+        <div class="svc-card">
+          <div class="name">image</div>
+          <div class="desc">Text-to-image (DALL-E, Stable Diffusion)</div>
+        </div>
+        <div class="svc-card">
+          <div class="name">embedding</div>
+          <div class="desc">Text embeddings (nomic-embed-text)</div>
+        </div>
+        <div class="svc-card">
+          <div class="name">tts</div>
+          <div class="desc">Text-to-speech (OpenAI TTS)</div>
+        </div>
+        <div class="svc-card">
+          <div class="name">stt</div>
+          <div class="desc">Speech-to-text (Whisper)</div>
+        </div>
+        <div class="svc-card">
+          <div class="name">3d_model</div>
+          <div class="desc">Text-to-3D (Meshy, Shap-E)</div>
+        </div>
+        <div class="svc-card">
+          <div class="name">moderation</div>
+          <div class="desc">Content moderation (OpenAI)</div>
+        </div>
+      </div>
+
+      <h2>Deployment Tiers</h2>
+      <table>
+        <thead>
+          <tr><th>Tier</th><th>Stack</th><th>PII Coverage</th><th>Dependencies</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge badge-green">1 Minimal</span></td>
+            <td>Go binary</td>
+            <td>~70% (regex: email, phone, CC, SSN, IBAN, IP)</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td><span class="badge badge-blue">2 Recommended</span></td>
+            <td>Go + Ollama</td>
+            <td>~95% (+names, orgs, addresses via NER)</td>
+            <td>Ollama</td>
+          </tr>
+          <tr>
+            <td><span class="badge badge-purple">3 Maximum</span></td>
+            <td>Go + Ollama + Presidio</td>
+            <td>Maximum quality NER</td>
+            <td>Ollama + Python/Presidio</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Modules</h2>
+      <table>
+        <thead>
+          <tr><th>Module</th><th>Responsibility</th><th>EN</th><th>RU</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Vault</strong></td><td>Secret storage, Sign-not-Expose, token management</td><td><a href="en/vault.html">EN</a></td><td><a href="ru/vault.html">RU</a></td></tr>
+          <tr><td><strong>Provider</strong></td><td>AI provider adapters (Claude, Ollama, OpenAI, Gemini)</td><td><a href="en/provider.html">EN</a></td><td><a href="ru/provider.html">RU</a></td></tr>
+          <tr><td><strong>Ingress</strong></td><td>Auth, rate limiting, ServiceType detection, text extraction</td><td><a href="en/ingress.html">EN</a></td><td><a href="ru/ingress.html">RU</a></td></tr>
+          <tr><td><strong>Privacy</strong></td><td>PII detection and obfuscation (tiered: Regex/Ollama/Presidio)</td><td><a href="en/privacy.html">EN</a></td><td><a href="ru/privacy.html">RU</a></td></tr>
+          <tr><td><strong>Cost</strong></td><td>Expense tracking, budgets, subscription quotas</td><td><a href="en/cost.html">EN</a></td><td><a href="ru/cost.html">RU</a></td></tr>
+          <tr><td><strong>Audit</strong></td><td>Append-only log with HMAC chain</td><td><a href="en/audit.html">EN</a></td><td><a href="ru/audit.html">RU</a></td></tr>
+          <tr><td><strong>Cache</strong></td><td>Semantic cache with VP-tree index</td><td><a href="en/cache.html">EN</a></td><td><a href="ru/cache.html">RU</a></td></tr>
+          <tr><td><strong>Policy</strong></td><td>Routing, budget guard, failover orchestration</td><td><a href="en/policy.html">EN</a></td><td><a href="ru/policy.html">RU</a></td></tr>
+        </tbody>
+      </table>
+    </main>
+  </div>
+</body>
+</html>
